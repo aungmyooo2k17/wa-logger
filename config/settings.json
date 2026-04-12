@@ -1,0 +1,12 @@
+{
+  "whisperCommand": "whisper",
+  "whisperModel": "base",
+  "whisperExtraArgs": "--language auto --output_format txt",
+  "ollamaUrl": "http://localhost:11434",
+  "ollamaVisionModel": "llava",
+  "claudeCommand": "claude",
+  "pipelineHour": 3,
+  "pipelineMinute": 0,
+  "timezone": "Asia/Singapore",
+  "serverPort": 3456
+}

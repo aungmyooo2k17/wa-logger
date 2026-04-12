@@ -1,0 +1,19 @@
+{
+  "groups": [
+    {
+      "jid": "120363425881701415@g.us",
+      "slug": "test-group",
+      "displayName": "Test Group",
+      "active": true,
+      "template": "social-highlights",
+      "language": "en",
+      "currency": "SGD",
+      "features": {
+        "expenseTracking": false,
+        "receiptOCR": false,
+        "audioTranscription": true
+      },
+      "participants": {}
+    }
+  ]
+}
