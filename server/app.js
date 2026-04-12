@@ -18,6 +18,7 @@ try {
 const app = express();
 app.use(express.json());
 app.use("/api", apiRouter);
+app.use("/media", express.static(path.join(PROJECT_DIR, "media")));
 app.use(express.static(path.join(import.meta.dirname, "public")));
 
 app.listen(port, () => {

@@ -117,6 +117,11 @@
         <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Groups</p>
       </div>
       <div id="sidebar-groups"></div>
+
+      <div class="mt-4 mb-2 px-3">
+        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Direct Messages</p>
+      </div>
+      <div id="sidebar-dms"></div>
     </nav>
 
     <!-- Pipeline status indicator -->
@@ -216,17 +221,33 @@
         <!-- Stat Cards -->
         <div id="group-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8"></div>
 
-        <!-- Tabs: Summaries / Purchases / Settings -->
+        <!-- Tabs: Messages / Summaries / Purchases / Settings -->
         <div class="border-b border-gray-200 mb-6">
           <nav class="flex gap-6">
-            <button onclick="showGroupTab('summaries')" id="gtab-summaries" class="group-tab pb-3 text-sm font-medium border-b-2 border-brand-600 text-brand-700">Summaries</button>
+            <button onclick="showGroupTab('messages')" id="gtab-messages" class="group-tab pb-3 text-sm font-medium border-b-2 border-brand-600 text-brand-700">Messages</button>
+            <button onclick="showGroupTab('summaries')" id="gtab-summaries" class="group-tab pb-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">Summaries</button>
             <button onclick="showGroupTab('purchases')" id="gtab-purchases" class="group-tab pb-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">Purchases</button>
             <button onclick="showGroupTab('group-config')" id="gtab-group-config" class="group-tab pb-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">Configuration</button>
           </nav>
         </div>
 
+        <!-- Messages Tab -->
+        <div id="group-tab-messages" class="group-tab-content">
+          <div class="flex items-center gap-3 mb-4">
+            <select id="messages-date-select" onchange="loadGroupMessages()" class="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+              <option value="">All dates</option>
+            </select>
+            <span id="messages-count" class="text-xs text-gray-400"></span>
+          </div>
+          <div id="group-messages-list" class="space-y-1"></div>
+          <div id="group-messages-empty" class="hidden text-center py-12">
+            <svg class="w-12 h-12 text-gray-300 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+            <p class="text-gray-400 text-sm">No messages found.</p>
+          </div>
+        </div>
+
         <!-- Summaries Tab -->
-        <div id="group-tab-summaries" class="group-tab-content">
+        <div id="group-tab-summaries" class="group-tab-content hidden">
           <div id="group-summaries-list" class="space-y-5"></div>
           <div id="group-summaries-empty" class="hidden text-center py-12">
             <svg class="w-12 h-12 text-gray-300 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
@@ -256,7 +277,9 @@
 <script>
 // ============ STATE ============
 let groups = [];
-let currentGroup = null;
+let allChats = [];
+let currentGroup = null;  // can be a group or DM
+let currentJid = null;
 let pipelinePolling = null;
 
 // ============ NAVIGATION ============
@@ -275,9 +298,10 @@ function showView(name) {
   if (name === 'settings') loadSettingsForm();
 }
 
-function showGroupView(slug) {
-  currentGroup = groups.find(g => g.slug === slug);
-  if (!currentGroup) return;
+function showChatView(jid) {
+  currentJid = jid;
+  const chat = allChats.find(c => c.jid === jid);
+  currentGroup = chat?.slug ? groups.find(g => g.slug === chat.slug) : null;
 
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
   document.querySelectorAll('.nav-item').forEach(n => { n.classList.remove('bg-gray-800','text-white'); n.classList.add('text-gray-300'); });
@@ -287,23 +311,59 @@ function showGroupView(slug) {
   el.classList.remove('hidden');
   el.classList.add('fade-in');
 
-  const navEl = document.getElementById('gnav-' + slug);
+  const navEl = document.getElementById('gnav-' + safeId(jid));
   if (navEl) { navEl.classList.add('bg-gray-800','text-white'); navEl.classList.remove('text-gray-300'); }
 
-  document.getElementById('group-title').textContent = currentGroup.displayName;
+  const displayName = chat?.name || currentGroup?.displayName || jid;
+  document.getElementById('group-title').textContent = displayName;
 
   const templateLabels = { 'expense-tracker':'Expense Tracker', 'business-summary':'Business', 'social-highlights':'Social' };
   const templateColors = { 'expense-tracker':'bg-amber-100 text-amber-800', 'business-summary':'bg-blue-100 text-blue-800', 'social-highlights':'bg-purple-100 text-purple-800' };
 
-  document.getElementById('group-meta').innerHTML = `
-    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${currentGroup.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}">${currentGroup.active ? 'Active' : 'Inactive'}</span>
-    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${templateColors[currentGroup.template] || 'bg-gray-100 text-gray-800'}">${templateLabels[currentGroup.template] || currentGroup.template}</span>
-    <span class="text-xs text-gray-400">${currentGroup.language?.toUpperCase()} ${currentGroup.currency ? '/ ' + currentGroup.currency : ''}</span>
-  `;
+  let metaHtml = '';
+  if (chat?.isGroup) {
+    metaHtml += `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">Group</span>`;
+  } else {
+    metaHtml += `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">DM</span>`;
+  }
+  if (currentGroup) {
+    metaHtml += `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${currentGroup.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}">${currentGroup.active ? 'Active' : 'Inactive'}</span>`;
+    metaHtml += `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${templateColors[currentGroup.template] || 'bg-gray-100 text-gray-800'}">${templateLabels[currentGroup.template] || currentGroup.template}</span>`;
+    metaHtml += `<span class="text-xs text-gray-400">${currentGroup.language?.toUpperCase() || ''} ${currentGroup.currency ? '/ ' + currentGroup.currency : ''}</span>`;
+  } else if (chat?.configured === false) {
+    metaHtml += `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Not configured</span>`;
+  }
+  metaHtml += `<span class="text-xs text-gray-400">${chat?.messageCount || 0} messages</span>`;
+  document.getElementById('group-meta').innerHTML = metaHtml;
 
-  showGroupTab('summaries');
-  loadGroupStats(slug);
-  loadGroupSummaries(slug);
+  // Show/hide tabs based on whether this is a configured group
+  document.getElementById('gtab-summaries').classList.toggle('hidden', !currentGroup);
+  document.getElementById('gtab-purchases').classList.toggle('hidden', !currentGroup);
+  document.getElementById('gtab-group-config').classList.toggle('hidden', !currentGroup);
+
+  showGroupTab('messages');
+  loadMessageDates(jid);
+  loadGroupMessages();
+  if (currentGroup) {
+    loadGroupStats(currentGroup.slug);
+  } else {
+    document.getElementById('group-stats').innerHTML = `
+      <div class="bg-white rounded-xl border border-gray-200 p-4">
+        <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Messages</p>
+        <p class="text-2xl font-bold text-gray-900 mt-1">${(chat?.messageCount || 0).toLocaleString()}</p>
+      </div>
+      <div class="bg-white rounded-xl border border-gray-200 p-4">
+        <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Last Activity</p>
+        <p class="text-lg font-bold text-gray-900 mt-1">${chat?.lastDate ? chat.lastDate.slice(0,10) : 'N/A'}</p>
+      </div>
+    `;
+  }
+}
+
+// backward compat
+function showGroupView(slug) {
+  const group = groups.find(g => g.slug === slug);
+  if (group) showChatView(group.jid);
 }
 
 function showGroupTab(tab) {
@@ -313,6 +373,8 @@ function showGroupTab(tab) {
   document.getElementById('gtab-' + tab)?.classList.remove('border-transparent','text-gray-500');
   document.getElementById('group-tab-' + tab)?.classList.remove('hidden');
 
+  if (tab === 'messages' && currentJid) loadGroupMessages();
+  if (tab === 'summaries' && currentGroup) loadGroupSummaries(currentGroup.slug);
   if (tab === 'purchases' && currentGroup) loadGroupPurchases(currentGroup.slug);
   if (tab === 'group-config' && currentGroup) loadGroupConfig(currentGroup.slug);
 }
@@ -320,14 +382,30 @@ function showGroupTab(tab) {
 function showGroupSettings() { showGroupTab('group-config'); }
 
 // ============ SIDEBAR ============
+function safeId(jid) { return jid.replace(/[^a-zA-Z0-9]/g, '_'); }
+
 async function loadGroups() {
   groups = await fetch('/api/groups').then(r => r.json());
-  const el = document.getElementById('sidebar-groups');
-  el.innerHTML = groups.map(g => `
-    <button onclick="showGroupView('${g.slug}')" id="gnav-${g.slug}"
+  allChats = await fetch('/api/chats').then(r => r.json());
+
+  const groupChats = allChats.filter(c => c.isGroup);
+  const dmChats = allChats.filter(c => !c.isGroup);
+
+  const groupsEl = document.getElementById('sidebar-groups');
+  groupsEl.innerHTML = groupChats.map(c => `
+    <button onclick="showChatView('${c.jid}')" id="gnav-${safeId(c.jid)}"
       class="group-nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors mb-0.5">
-      <span class="w-2 h-2 rounded-full flex-shrink-0 ${g.active ? 'bg-brand-500' : 'bg-gray-600'}"></span>
-      <span class="truncate">${g.displayName}</span>
+      <span class="w-2 h-2 rounded-full flex-shrink-0 ${c.active ? 'bg-brand-500' : c.configured ? 'bg-gray-600' : 'bg-yellow-500'}"></span>
+      <span class="truncate">${c.name || c.jid}</span>
+    </button>
+  `).join('');
+
+  const dmsEl = document.getElementById('sidebar-dms');
+  dmsEl.innerHTML = dmChats.map(c => `
+    <button onclick="showChatView('${c.jid}')" id="gnav-${safeId(c.jid)}"
+      class="group-nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors mb-0.5">
+      <span class="w-2 h-2 rounded-full flex-shrink-0 bg-blue-400"></span>
+      <span class="truncate">${c.name || c.jid}</span>
     </button>
   `).join('');
 }
@@ -335,33 +413,26 @@ async function loadGroups() {
 // ============ OVERVIEW ============
 async function loadOverview() {
   const container = document.getElementById('overview-cards');
-  container.innerHTML = groups.map(g => `
-    <button onclick="showGroupView('${g.slug}')" class="text-left bg-white rounded-xl border border-gray-200 p-5 hover:border-brand-300 hover:shadow-md transition-all group">
+
+  // Show all chats as cards
+  container.innerHTML = allChats.map(c => {
+    const name = c.name || c.jid;
+    const typeLabel = c.isGroup ? 'Group' : 'DM';
+    const typeBadge = c.isGroup ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700';
+    const statusDot = c.active ? 'bg-green-400' : c.configured ? 'bg-gray-300' : 'bg-yellow-400';
+    return `
+    <button onclick="showChatView('${c.jid}')" class="text-left bg-white rounded-xl border border-gray-200 p-5 hover:border-brand-300 hover:shadow-md transition-all group">
       <div class="flex items-center justify-between mb-3">
-        <h3 class="font-semibold text-gray-900 group-hover:text-brand-700 transition-colors">${g.displayName}</h3>
-        <span class="w-2.5 h-2.5 rounded-full ${g.active ? 'bg-green-400' : 'bg-gray-300'}"></span>
+        <h3 class="font-semibold text-gray-900 group-hover:text-brand-700 transition-colors truncate mr-2">${escapeHtml(name)}</h3>
+        <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusDot}"></span>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
-        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">${g.template}</span>
-        <span class="text-xs text-gray-400">${g.language?.toUpperCase()}${g.currency ? ' / ' + g.currency : ''}</span>
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${typeBadge}">${typeLabel}</span>
+        ${c.template ? `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">${c.template}</span>` : ''}
       </div>
-      <div id="overview-stats-${g.slug}" class="mt-3 text-xs text-gray-400"></div>
-    </button>
-  `).join('');
-
-  // Load stats for each group
-  for (const g of groups) {
-    fetch(`/api/groups/${g.slug}/stats`).then(r => r.json()).then(stats => {
-      const el = document.getElementById('overview-stats-' + g.slug);
-      if (el) {
-        const parts = [];
-        if (stats.messageCount) parts.push(`${stats.messageCount} msgs`);
-        if (stats.summaryCount) parts.push(`${stats.summaryCount} summaries`);
-        if (stats.purchaseCount) parts.push(`${stats.purchaseCount} purchases`);
-        el.textContent = parts.join(' / ') || 'No data yet';
-      }
-    });
-  }
+      <div class="mt-3 text-xs text-gray-400">${c.messageCount} msgs${c.lastDate ? ' / last: ' + c.lastDate.slice(0,10) : ''}</div>
+    </button>`;
+  }).join('');
 
   // Detected groups
   const detected = await fetch('/api/detected-groups').then(r => r.json());
@@ -418,6 +489,89 @@ async function loadGroupStats(slug) {
       <p class="text-lg font-bold text-gray-900 mt-1">${stats.lastMessageDate ? stats.lastMessageDate.slice(0,10) : 'N/A'}</p>
     </div>
   `;
+}
+
+async function loadMessageDates(jid) {
+  const dates = await fetch(`/api/chats/${encodeURIComponent(jid)}/dates`).then(r => r.json());
+  const sel = document.getElementById('messages-date-select');
+  sel.innerHTML = '<option value="">All dates</option>' + dates.map(d => `<option value="${d}">${d}</option>`).join('');
+  if (dates.length > 0) sel.value = dates[0];
+}
+
+async function loadGroupMessages() {
+  if (!currentJid) return;
+  const date = document.getElementById('messages-date-select').value;
+  const url = `/api/chats/${encodeURIComponent(currentJid)}/messages` + (date ? `?date=${date}` : '?limit=200');
+  const messages = await fetch(url).then(r => r.json());
+
+  const listEl = document.getElementById('group-messages-list');
+  const emptyEl = document.getElementById('group-messages-empty');
+  document.getElementById('messages-count').textContent = `${messages.length} messages`;
+
+  if (messages.length === 0) {
+    listEl.innerHTML = '';
+    emptyEl.classList.remove('hidden');
+    return;
+  }
+  emptyEl.classList.add('hidden');
+
+  listEl.innerHTML = messages.map(m => {
+    const time = m.date ? new Date(m.date).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+    const sender = m.fromMe ? 'You' : (m.pushName || m.participant || 'Unknown');
+    const align = m.fromMe ? 'ml-auto' : '';
+    const bubbleBg = m.fromMe ? 'bg-brand-600 text-white' : 'bg-white border border-gray-200';
+    const senderColor = m.fromMe ? 'text-brand-200' : 'text-brand-700';
+    const timeColor = m.fromMe ? 'text-brand-200' : 'text-gray-400';
+
+    let content = '';
+
+    // Media rendering
+    if (m.mediaType && m.mediaType !== 'conversation') {
+      if (m.mediaMimetype?.startsWith('image/') && m.mediaUrl) {
+        content += `<img src="${m.mediaUrl}" alt="image" class="rounded-lg max-w-xs max-h-60 mt-1 cursor-pointer" onclick="window.open('${m.mediaUrl}','_blank')">`;
+      } else if (m.mediaMimetype?.startsWith('audio/') && m.mediaUrl) {
+        content += `<audio controls class="mt-1 max-w-xs" preload="none"><source src="${m.mediaUrl}" type="${m.mediaMimetype}"></audio>`;
+      } else if (m.mediaMimetype?.startsWith('video/') && m.mediaUrl) {
+        content += `<video controls class="rounded-lg max-w-xs max-h-48 mt-1" preload="none"><source src="${m.mediaUrl}" type="${m.mediaMimetype}"></video>`;
+      } else if (m.mediaMimetype === 'application/pdf' && m.mediaUrl) {
+        content += `<a href="${m.mediaUrl}" target="_blank" class="inline-flex items-center gap-1.5 mt-1 px-3 py-1.5 rounded-lg ${m.fromMe ? 'bg-brand-700' : 'bg-gray-100'} text-sm"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>PDF Document</a>`;
+      } else if (m.mediaUrl) {
+        const typeLabel = {imageMessage:'Image',videoMessage:'Video',audioMessage:'Voice',documentMessage:'Document',stickerMessage:'Sticker',lottieStickerMessage:'Sticker',contactMessage:'Contact'}[m.mediaType] || m.mediaType;
+        content += `<a href="${m.mediaUrl}" target="_blank" class="text-xs underline mt-1 inline-block">${typeLabel}</a>`;
+      } else {
+        const typeLabel = {imageMessage:'Image',videoMessage:'Video',audioMessage:'Voice Note',documentMessage:'Document',stickerMessage:'Sticker',lottieStickerMessage:'Sticker',contactMessage:'Contact'}[m.mediaType] || m.mediaType;
+        content += `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${m.fromMe ? 'bg-brand-700' : 'bg-gray-100 text-gray-500'} mt-1"><svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>${typeLabel}</span>`;
+      }
+    }
+
+    // Text
+    if (m.text) {
+      content += `<p class="text-sm leading-relaxed ${m.mediaType && m.mediaType !== 'conversation' ? 'mt-1' : ''}">${escapeHtml(m.text)}</p>`;
+    }
+
+    if (!content) {
+      content = `<span class="text-xs opacity-60">[${m.mediaType || 'empty'}]</span>`;
+    }
+
+    return `
+      <div class="flex ${m.fromMe ? 'justify-end' : 'justify-start'}">
+        <div class="max-w-[75%] ${align} ${bubbleBg} rounded-2xl px-4 py-2.5 ${m.fromMe ? 'rounded-br-md' : 'rounded-bl-md'}">
+          ${!m.fromMe ? `<p class="text-xs font-semibold ${senderColor} mb-0.5">${escapeHtml(sender)}</p>` : ''}
+          ${content}
+          <p class="text-[10px] ${timeColor} mt-1 text-right">${time}</p>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Scroll to bottom
+  listEl.scrollTop = listEl.scrollHeight;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 async function loadGroupSummaries(slug) {
