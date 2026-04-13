@@ -116,15 +116,14 @@ console.log(`[process-media] Done. Processed: ${processed}, Skipped: ${skipped},
 // --- Processors ---
 
 function processAudio(filePath, outFile, msgId) {
-  const whisperCmd = settings.whisperCommand || "whisper";
   const model = settings.whisperModel || "base";
-  const extraArgs = settings.whisperExtraArgs || "--language auto --output_format txt";
+  const extraArgs = settings.whisperExtraArgs || "--output_format txt";
 
-  // Check if whisper is available
+  // Check if docker is available
   try {
-    execSync(`which ${whisperCmd}`, { stdio: "pipe" });
+    execSync("docker --version", { stdio: "pipe" });
   } catch {
-    console.warn(`[process-media] ${whisperCmd} not found. Skipping audio ${msgId}. Install: pip install openai-whisper`);
+    console.warn(`[process-media] Docker not found. Skipping audio ${msgId}. Install: brew install docker`);
     return;
   }
 
@@ -133,19 +132,26 @@ function processAudio(filePath, outFile, msgId) {
   fs.mkdirSync(tmpDir, { recursive: true });
 
   try {
+    const fileName = path.basename(filePath);
+    const mediaDir = path.dirname(filePath);
+
+    // Run Whisper via Docker
     execSync(
-      `${whisperCmd} "${filePath}" --model ${model} ${extraArgs} --output_dir "${tmpDir}"`,
-      { stdio: "pipe", timeout: 120000 }
+      `docker run --rm -v "${mediaDir}:/media" wa-whisper "/media/${fileName}" --model ${model} ${extraArgs} --output_dir /media`,
+      { stdio: "pipe", timeout: 300000 }
     );
 
     // Whisper outputs {filename}.txt in the output dir
     const baseName = path.basename(filePath, path.extname(filePath));
-    const whisperOut = path.join(tmpDir, `${baseName}.txt`);
+    const whisperOut = path.join(mediaDir, `${baseName}.txt`);
     if (fs.existsSync(whisperOut)) {
       fs.copyFileSync(whisperOut, outFile);
       fs.unlinkSync(whisperOut);
       console.log(`[process-media] Audio transcribed: ${msgId}`);
     }
+  } catch (err) {
+    console.warn(`[process-media] Docker Whisper failed for ${msgId}: ${err.message}`);
+    console.warn(`[process-media] Ensure image is built: docker build -f Dockerfile.whisper -t wa-whisper .`);
   } finally {
     // Clean up tmp dir
     try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
@@ -153,10 +159,6 @@ function processAudio(filePath, outFile, msgId) {
 }
 
 function processImage(filePath, outFile, msgId, receiptOCR) {
-  const ollamaUrl = settings.ollamaUrl || "http://localhost:11434";
-  const model = settings.ollamaVisionModel || "llava";
-
-  // Check if ollama has the vision model by trying a simple generate
   const imageBase64 = fs.readFileSync(filePath).toString("base64");
 
   const prompt = receiptOCR
@@ -166,29 +168,24 @@ function processImage(filePath, outFile, msgId, receiptOCR) {
   console.log(`[process-media] Analyzing image: ${msgId}`);
 
   try {
-    const payload = JSON.stringify({
-      model,
-      prompt,
-      images: [imageBase64],
-      stream: false,
-    });
-
+    // Use Claude via CLI (haiku = cheapest model)
     const result = execSync(
-      `curl -s -X POST "${ollamaUrl}/api/generate" -H "Content-Type: application/json" -d @-`,
-      { input: payload, timeout: 120000, maxBuffer: 50 * 1024 * 1024 }
+      `claude -p --model haiku`,
+      {
+        input: `[image: data:image/png;base64,${imageBase64}]\n\n${prompt}`,
+        timeout: 120000,
+        maxBuffer: 50 * 1024 * 1024,
+        stdio: ["pipe", "pipe", "pipe"]
+      }
     );
 
-    const response = JSON.parse(result.toString());
-    if (response.error) {
-      throw new Error(response.error);
-    }
-    if (response.response) {
-      fs.writeFileSync(outFile, response.response.trim(), "utf-8");
+    const output = result.toString().trim();
+    if (output) {
+      fs.writeFileSync(outFile, output, "utf-8");
       console.log(`[process-media] Image analyzed: ${msgId}`);
     }
   } catch (err) {
-    console.warn(`[process-media] Ollama vision failed for ${msgId}: ${err.message}`);
-    console.warn(`[process-media] Ensure model '${model}' is pulled: ollama pull ${model}`);
+    console.warn(`[process-media] Claude image analysis failed for ${msgId}: ${err.message}`);
   }
 }
 

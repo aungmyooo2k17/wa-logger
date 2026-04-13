@@ -6,11 +6,13 @@ WhatsApp message logger and daily summarization platform. Connects as a linked d
 
 - **Message logging** -- captures all incoming/outgoing messages (text, images, audio, video, documents, stickers, contacts)
 - **Media download** -- saves all shared media to disk
-- **Daily summarization** -- generates per-group summaries using Claude CLI with customizable templates
-- **Multi-language** -- supports English, Chinese, Thai, Malay, Cantonese
-- **Media pre-processing** -- transcribes audio (Whisper), analyzes images (Ollama), extracts PDF text
+- **Auto-discovery** -- automatically detects WhatsApp groups and configures them with sensible defaults
+- **Daily summarization** -- generates per-group summaries using Claude Haiku (cost-effective)
+- **Multi-language** -- supports English, Chinese, Thai, Malay, Cantonese with auto-detection
+- **Media pre-processing** -- transcribes audio (Whisper), analyzes images (Claude Haiku), extracts PDF text
 - **Purchase tracking** -- detects and extracts expenses from designated groups
 - **Web dashboard** -- view summaries, track expenses, configure groups, trigger pipeline
+- **24/7 always-on** -- aggressive reconnection, health monitoring, auto-restart on crash
 
 ## Quick Start
 
@@ -25,6 +27,135 @@ npm run dashboard
 
 # 3. Run the daily summarization pipeline
 bash scripts/daily-pipeline.sh 2026-04-12
+```
+
+## 24/7 Always-On Setup (Production)
+
+To run the logger continuously with automatic reconnection, health monitoring, and crash recovery:
+
+### 1. Install PM2 (process manager)
+
+```bash
+npm install -g pm2
+```
+
+### 2. Auto-Discover Groups & Start the bot with PM2
+
+Groups are automatically discovered from incoming messages and added to `config/groups.json` with default settings:
+
+```bash
+pm2 start scripts/start.js --name "wa-logger" --interpreter node
+```
+
+This wrapper script:
+- ✅ Scans all incoming WhatsApp groups
+- ✅ Auto-adds new groups to config (English, Singapore currency, all features enabled)
+- ✅ Runs on every bot restart
+- ✅ No manual group configuration needed!
+
+**Manual auto-discovery** (if needed):
+```bash
+node scripts/auto-discover-groups.js
+```
+
+### 3. Save and enable startup on reboot (optional)
+
+```bash
+pm2 save
+pm2 startup
+```
+
+Then copy and run the command that PM2 outputs (requires `sudo`).
+
+### 4. Monitor the bot
+
+```bash
+# Watch live logs
+pm2 logs wa-logger
+
+# Check status
+pm2 status
+
+# Real-time dashboard
+pm2 monit
+```
+
+### Features
+
+The bot includes battle-tested reliability features from OpenClaw:
+
+- **Heartbeat monitor** — logs connection health every 60 seconds
+- **Watchdog timer** — auto-reconnects if no messages for 5 minutes
+- **Exponential backoff** — intelligent reconnection with delays (2s → 30s max)
+- **WebSocket error handling** — prevents crashes from network errors
+- **Attempt limiting** — gives up after 12 failed attempts to prevent infinite loops
+- **Smart reset** — resets attempt counter after stable connection (>60s)
+
+### Log Output
+
+**Healthy connection:**
+```
+[HEARTBEAT] Uptime: 3600s | Messages: 42 | Last inbound: 30s ago
+```
+
+**Reconnecting after network drop:**
+```
+[RECONNECT] Attempt 1/12. Reconnecting in 2000ms...
+[RECONNECT] Attempt 2/12. Reconnecting in 3600ms...
+[RECONNECT] Attempt 3/12. Reconnecting in 6480ms...
+```
+
+**Watchdog timeout (no messages for 5 min):**
+```
+[WATCHDOG] No messages for 5m. Forcing reconnect...
+```
+
+## Automatic Group Discovery
+
+The bot automatically detects all WhatsApp groups and adds them to `config/groups.json` with default settings:
+
+```json
+{
+  "jid": "120363163512901566@g.us",
+  "slug": "group-name",
+  "displayName": "Group Name",
+  "active": true,
+  "template": "business-summary",
+  "language": "en",
+  "currency": "SGD",
+  "features": {
+    "expenseTracking": true,
+    "receiptOCR": true,
+    "audioTranscription": true
+  },
+  "participants": {}
+}
+```
+
+**How it works:**
+1. Bot receives messages from a new group
+2. Next restart (or manual run), `scripts/auto-discover-groups.js` scans `messages.json`
+3. New groups are auto-added to `config/groups.json` with defaults
+4. All features enabled: expense tracking, receipt OCR, audio transcription
+5. Language: English, Currency: Singapore Dollar
+
+**Run auto-discovery manually:**
+```bash
+node scripts/auto-discover-groups.js
+```
+
+**Change defaults after discovery:**
+- Edit `config/groups.json` to customize per-group settings
+- Disable groups by setting `"active": false`
+- Change templates: `business-summary`, `expense-tracker`, `social-highlights`
+
+### Useful PM2 Commands
+
+```bash
+pm2 restart wa-logger        # Restart the bot
+pm2 stop wa-logger           # Stop the bot
+pm2 delete wa-logger         # Remove from PM2
+pm2 logs wa-logger --lines 100  # View last 100 log lines
 ```
 
 ## Architecture
@@ -121,17 +252,36 @@ Each group gets its own config in `config/groups.json`:
 - `business-summary` -- action items, decisions, deadlines, unresolved questions
 - `social-highlights` -- daily highlights, key info, plans, notable moments
 
-## Optional Dependencies
+## Media Pre-Processing
 
-The logger works standalone. These are needed for media pre-processing:
+### Audio Transcription (Whisper)
+
+Audio files are transcribed using OpenAI Whisper via Docker:
 
 ```bash
-# Audio transcription (speech-to-text)
-pip install openai-whisper
-
-# Image analysis and OCR
-ollama pull llava
+# Build Whisper Docker image
+docker build -f Dockerfile.whisper -t wa-whisper .
 ```
+
+Features:
+- ✅ Auto-detects language (English, Chinese, Thai, Malay, etc.)
+- ✅ Saves transcripts to `data/transcripts/`
+- ✅ Integrated in daily pipeline
+
+### Image OCR & Analysis (Claude)
+
+Images are analyzed using Claude Haiku model (cheapest):
+
+```bash
+# Requires Claude API access (set via ANTHROPIC_API_KEY)
+# Analyzes receipts, invoices, text extraction automatically
+```
+
+Features:
+- ✅ Receipt & invoice extraction
+- ✅ Text recognition (OCR)
+- ✅ Multi-language support
+- ✅ Cost-effective (Haiku model)
 
 ## Scheduling
 

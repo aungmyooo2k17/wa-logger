@@ -1,7 +1,7 @@
 {
   "whisperCommand": "whisper",
   "whisperModel": "base",
-  "whisperExtraArgs": "--language auto --output_format txt",
+  "whisperExtraArgs": "--output_format txt",
   "ollamaUrl": "http://localhost:11434",
   "ollamaVisionModel": "llava",
   "claudeCommand": "claude",

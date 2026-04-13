@@ -71,8 +71,8 @@ $DAY_MESSAGES"
   PROMPT_FILE=$(mktemp)
   printf '%s' "$FULL_PROMPT" > "$PROMPT_FILE"
 
-  # Call Claude CLI
-  RESULT=$(claude --dangerously-skip-permissions -p "$(cat "$PROMPT_FILE")" 2>/dev/null) || true
+  # Call Claude CLI with cheapest model (haiku)
+  RESULT=$(claude --dangerously-skip-permissions -p --model haiku "$(cat "$PROMPT_FILE")" 2>/dev/null) || true
   rm -f "$PROMPT_FILE"
 
   if [ -z "$RESULT" ]; then

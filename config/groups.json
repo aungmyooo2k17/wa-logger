@@ -14,6 +14,156 @@
         "audioTranscription": true
       },
       "participants": {}
+    },
+    {
+      "jid": "120363163512901566@g.us",
+      "slug": "sk-autoparts",
+      "displayName": "SK Autoparts- Fresh Cars",
+      "active": true,
+      "template": "expense-tracker",
+      "language": "en",
+      "currency": "SGD",
+      "features": {
+        "expenseTracking": true,
+        "receiptOCR": true,
+        "audioTranscription": true
+      },
+      "participants": {}
+    },
+    {
+      "jid": "120363139813367784@g.us",
+      "slug": "fresh-cars-workshop",
+      "displayName": "Fresh Cars Workshop",
+      "active": true,
+      "template": "business-summary",
+      "language": "en",
+      "currency": "SGD",
+      "features": {
+        "expenseTracking": true,
+        "receiptOCR": true,
+        "audioTranscription": true
+      },
+      "participants": {}
+    },
+    {
+      "jid": "120363284114646319@g.us",
+      "slug": "sin-seng-hup---fresh-cars",
+      "displayName": "Sin Seng Hup - Fresh Cars",
+      "active": true,
+      "template": "business-summary",
+      "language": "en",
+      "currency": "SGD",
+      "features": {
+        "expenseTracking": true,
+        "receiptOCR": true,
+        "audioTranscription": true
+      },
+      "participants": {}
+    },
+    {
+      "jid": "120363139448885909@g.us",
+      "slug": "seng-hup-fresh-cars",
+      "displayName": "Seng Hup & Fresh Cars",
+      "active": true,
+      "template": "business-summary",
+      "language": "en",
+      "currency": "SGD",
+      "features": {
+        "expenseTracking": true,
+        "receiptOCR": true,
+        "audioTranscription": true
+      },
+      "participants": {}
+    },
+    {
+      "jid": "120363320765032252@g.us",
+      "slug": "jae-auto-parts-fc",
+      "displayName": "JAE Auto parts & FC",
+      "active": true,
+      "template": "business-summary",
+      "language": "en",
+      "currency": "SGD",
+      "features": {
+        "expenseTracking": true,
+        "receiptOCR": true,
+        "audioTranscription": true
+      },
+      "participants": {}
+    },
+    {
+      "jid": "120363131538865264@g.us",
+      "slug": "max-parts",
+      "displayName": "MAX Parts",
+      "active": true,
+      "template": "business-summary",
+      "language": "en",
+      "currency": "SGD",
+      "features": {
+        "expenseTracking": true,
+        "receiptOCR": true,
+        "audioTranscription": true
+      },
+      "participants": {}
+    },
+    {
+      "jid": "6593360508-1621172732@g.us",
+      "slug": "myanmar-muslim-club-singapore-information-sharing-",
+      "displayName": "Myanmar Muslim Club (Singapore) Information Sharing Group",
+      "active": true,
+      "template": "social-highlights",
+      "language": "en",
+      "currency": "SGD",
+      "features": {
+        "expenseTracking": false,
+        "receiptOCR": false,
+        "audioTranscription": true
+      },
+      "participants": {}
+    },
+    {
+      "jid": "120363319183049449@g.us",
+      "slug": "lian-hupradiator-parts-fresh-cars",
+      "displayName": "Lian Hup(Radiator Parts)& Fresh Cars",
+      "active": true,
+      "template": "business-summary",
+      "language": "en",
+      "currency": "SGD",
+      "features": {
+        "expenseTracking": true,
+        "receiptOCR": true,
+        "audioTranscription": true
+      },
+      "participants": {}
+    },
+    {
+      "jid": "120363344655470886@g.us",
+      "slug": "guan-tong-spare-parts",
+      "displayName": "GUAN TONG Spare Parts",
+      "active": true,
+      "template": "business-summary",
+      "language": "en",
+      "currency": "SGD",
+      "features": {
+        "expenseTracking": true,
+        "receiptOCR": true,
+        "audioTranscription": true
+      },
+      "participants": {}
+    },
+    {
+      "jid": "120363164710552433@g.us",
+      "slug": "fc-tech-support-",
+      "displayName": "FC Tech Support 🧑🏻‍💻",
+      "active": true,
+      "template": "business-summary",
+      "language": "en",
+      "currency": "SGD",
+      "features": {
+        "expenseTracking": true,
+        "receiptOCR": true,
+        "audioTranscription": true
+      },
+      "participants": {}
     }
   ]
 }

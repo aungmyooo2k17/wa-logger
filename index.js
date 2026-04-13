@@ -5,6 +5,7 @@ import {
   fetchLatestBaileysVersion,
   downloadMediaMessage,
 } from "@whiskeysockets/baileys";
+import { setTimeout as delay } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import pino from "pino";
@@ -47,6 +48,29 @@ const MEDIA_MESSAGE_TYPES = [
   "stickerMessage",
   "lottieStickerMessage",
 ];
+
+// Aggressive reconnection & health monitoring (no disconnects allowed)
+const RECONNECT_POLICY = {
+  initialMs: 0,           // reconnect IMMEDIATELY (no delay)
+  maxMs: 0,               // no max delay
+  factor: 1,              // no exponential backoff
+  jitter: 0,              // no jitter
+  maxAttempts: Infinity,  // unlimited retries (never give up)
+};
+const HEARTBEAT_SECONDS = 10;                // check health every 10s
+const WATCHDOG_TIMEOUT_MS = 60 * 1000;       // 1 min no messages → reconnect
+const WATCHDOG_CHECK_MS = 10_000;             // check every 10s
+
+function computeBackoff(policy, attempt) {
+  const base = policy.initialMs * Math.pow(policy.factor, Math.max(attempt - 1, 0));
+  const jitter = base * policy.jitter * Math.random();
+  return Math.min(policy.maxMs, Math.round(base + jitter));
+}
+
+async function sleep(ms) {
+  if (ms <= 0) return;
+  await delay(ms);
+}
 
 function loadMessages() {
   try {
@@ -127,123 +151,214 @@ async function downloadMedia(msg, msgId, timestamp) {
   }
 }
 
-async function start() {
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const { version } = await fetchLatestBaileysVersion();
+async function connectOnce() {
+  return new Promise(async (resolve, reject) => {
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const { version } = await fetchLatestBaileysVersion();
 
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    logger,
-  });
+    const sock = makeWASocket({
+      version,
+      auth: state,
+      logger,
+    });
 
-  sock.ev.on("creds.update", saveCreds);
+    // Track connection metrics
+    let lastInboundAt = null;
+    let messagesHandled = 0;
+    const startedAt = Date.now();
+    let connectedAt = null;
+    let heartbeatTimer = null;
+    let watchdogTimer = null;
 
-  sock.ev.on("connection.update", (update) => {
-    const { connection, lastDisconnect, qr } = update;
-    if (qr) {
-      qrcode.generate(qr, { small: true });
-      console.log("Scan the QR code above with WhatsApp on your phone.\n");
-    }
-    if (connection === "open") {
-      console.log("Connected to WhatsApp. Listening for all messages...");
-      console.log(`Messages saved to: ${MESSAGES_FILE}`);
-      console.log(`Media saved to:    ${MEDIA_DIR}/\n`);
-    }
-    if (connection === "close") {
-      const statusCode =
-        lastDisconnect?.error?.output?.statusCode;
-      const loggedOut = statusCode === DisconnectReason.loggedOut;
-      if (loggedOut) {
-        console.log("Logged out. Delete the auth/ folder and restart to re-link.");
-        process.exit(1);
+    // Prevent unhandled WebSocket errors from crashing the process
+    sock.ws?.on("error", (err) => {
+      console.error("[WebSocket Error]", err.message);
+      // WebSocket errors are handled by Baileys' connection.update event
+    });
+
+    sock.ev.on("creds.update", saveCreds);
+
+    sock.ev.on("connection.update", (update) => {
+      const { connection, lastDisconnect, qr } = update;
+      if (qr) {
+        qrcode.generate(qr, { small: true });
+        console.log("Scan the QR code above with WhatsApp on your phone.\n");
       }
-      console.log(`Disconnected (status ${statusCode}). Reconnecting...`);
-      start();
-    }
-  });
+      if (connection === "open") {
+        connectedAt = Date.now();
+        console.log("Connected to WhatsApp. Listening for all messages...");
+        console.log(`Messages saved to: ${MESSAGES_FILE}`);
+        console.log(`Media saved to:    ${MEDIA_DIR}/\n`);
 
-  sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    for (const msg of messages) {
-      // Skip WhatsApp internal protocol messages (key distribution, read receipts, etc.)
-      if (msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) {
-        continue;
-      }
+        // Start heartbeat timer
+        heartbeatTimer = setInterval(() => {
+          const uptimeS = Math.floor((Date.now() - startedAt) / 1000);
+          const lastInboundAgo = lastInboundAt
+            ? Math.floor((Date.now() - lastInboundAt) / 1000)
+            : "never";
+          console.log(
+            `[HEARTBEAT] Uptime: ${uptimeS}s | Messages: ${messagesHandled} | Last inbound: ${lastInboundAgo}s ago`
+          );
+        }, HEARTBEAT_SECONDS * 1000);
 
-      const text = extractMessageText(msg);
-      const from = msg.key.remoteJid;
-      const isGroup = from?.endsWith("@g.us") ?? false;
-      const fromMe = msg.key.fromMe ?? false;
-      const participant = msg.key.participant || null;
-      const pushName = msg.pushName || null;
-      const timestamp = typeof msg.messageTimestamp === "number"
-        ? msg.messageTimestamp
-        : Number(msg.messageTimestamp);
-
-      // Resolve group name
-      let groupName = null;
-      if (isGroup) {
-        if (groupNameCache.has(from)) {
-          groupName = groupNameCache.get(from);
-        } else {
-          try {
-            const metadata = await sock.groupMetadata(from);
-            groupName = metadata.subject || null;
-            if (groupName) groupNameCache.set(from, groupName);
-          } catch {
-            // group metadata unavailable
+        // Start watchdog timer
+        watchdogTimer = setInterval(() => {
+          const baselineAt = lastInboundAt ?? startedAt;
+          const staleForMs = Date.now() - baselineAt;
+          if (staleForMs > WATCHDOG_TIMEOUT_MS) {
+            const staleForMin = Math.floor(staleForMs / 1000 / 60);
+            console.warn(
+              `[WATCHDOG] No messages for ${staleForMin}m. Forcing reconnect...`
+            );
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
+            if (watchdogTimer) clearInterval(watchdogTimer);
+            sock.end();
           }
+        }, WATCHDOG_CHECK_MS);
+      }
+      if (connection === "close") {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        if (watchdogTimer) clearInterval(watchdogTimer);
+
+        const statusCode =
+          lastDisconnect?.error?.output?.statusCode;
+        const loggedOut = statusCode === DisconnectReason.loggedOut;
+
+        if (loggedOut) {
+          reject(new Error("LOGGED_OUT"));
+        } else {
+          reject(new Error(`DISCONNECTED:${statusCode}`));
         }
       }
+    });
 
-      // Console log for live feedback
-      const direction = fromMe ? "SENT" : "RECV";
-      const chat = isGroup ? `group:${groupName || from}` : from;
-      const sender = fromMe ? "me" : (pushName || participant || from);
-      const mediaType = msg.message
-        ? Object.keys(msg.message).find((k) => k !== "messageContextInfo")
-        : null;
-      const preview = text ? text.slice(0, 80) : `[${mediaType || "no-text"}]`;
-      console.log(`[${new Date(timestamp * 1000).toISOString()}] ${direction} | ${chat} | ${sender}: ${preview}`);
+    sock.ev.on("messages.upsert", async ({ messages, type }) => {
+      for (const msg of messages) {
+        // Skip WhatsApp internal protocol messages (key distribution, read receipts, etc.)
+        if (msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) {
+          continue;
+        }
 
-      // Download media if present
-      const media = await downloadMedia(msg, msg.key.id, timestamp);
+        lastInboundAt = Date.now();
+        messagesHandled++;
 
-      const entry = {
-        id: msg.key.id,
-        from,
-        fromMe,
-        isGroup,
-        groupName,
-        participant,
-        pushName,
-        timestamp,
-        date: new Date(timestamp * 1000).toISOString(),
-        type,
-        text,
-        mediaType,
-        media,
-        raw: msg,
-      };
+        const text = extractMessageText(msg);
+        const from = msg.key.remoteJid;
+        const isGroup = from?.endsWith("@g.us") ?? false;
+        const fromMe = msg.key.fromMe ?? false;
+        const participant = msg.key.participant || null;
+        const pushName = msg.pushName || null;
+        const timestamp = typeof msg.messageTimestamp === "number"
+          ? msg.messageTimestamp
+          : Number(msg.messageTimestamp);
 
-      saveMessage(entry);
+        // Resolve group name
+        let groupName = null;
+        if (isGroup) {
+          if (groupNameCache.has(from)) {
+            groupName = groupNameCache.get(from);
+          } else {
+            try {
+              const metadata = await sock.groupMetadata(from);
+              groupName = metadata.subject || null;
+              if (groupName) groupNameCache.set(from, groupName);
+            } catch {
+              // group metadata unavailable
+            }
+          }
+        }
 
-      // Append lightweight index line for the summarization pipeline
-      const indexLine = JSON.stringify({
-        id: entry.id, from: entry.from, fromMe: entry.fromMe,
-        isGroup: entry.isGroup, groupName: entry.groupName,
-        participant: entry.participant, pushName: entry.pushName,
-        timestamp: entry.timestamp, date: entry.date, text: entry.text,
-        mediaType: entry.mediaType,
-        mediaPath: entry.media?.path || null,
-        mediaMimetype: entry.media?.mimetype || null,
-      });
-      fs.appendFileSync(INDEX_FILE, indexLine + "\n");
-    }
+        // Console log for live feedback
+        const direction = fromMe ? "SENT" : "RECV";
+        const chat = isGroup ? `group:${groupName || from}` : from;
+        const sender = fromMe ? "me" : (pushName || participant || from);
+        const mediaType = msg.message
+          ? Object.keys(msg.message).find((k) => k !== "messageContextInfo")
+          : null;
+        const preview = text ? text.slice(0, 80) : `[${mediaType || "no-text"}]`;
+        console.log(`[${new Date(timestamp * 1000).toISOString()}] ${direction} | ${chat} | ${sender}: ${preview}`);
+
+        // Download media if present
+        const media = await downloadMedia(msg, msg.key.id, timestamp);
+
+        const entry = {
+          id: msg.key.id,
+          from,
+          fromMe,
+          isGroup,
+          groupName,
+          participant,
+          pushName,
+          timestamp,
+          date: new Date(timestamp * 1000).toISOString(),
+          type,
+          text,
+          mediaType,
+          media,
+          raw: msg,
+        };
+
+        saveMessage(entry);
+
+        // Append lightweight index line for the summarization pipeline
+        const indexLine = JSON.stringify({
+          id: entry.id, from: entry.from, fromMe: entry.fromMe,
+          isGroup: entry.isGroup, groupName: entry.groupName,
+          participant: entry.participant, pushName: entry.pushName,
+          timestamp: entry.timestamp, date: entry.date, text: entry.text,
+          mediaType: entry.mediaType,
+          mediaPath: entry.media?.path || null,
+          mediaMimetype: entry.media?.mimetype || null,
+        });
+        fs.appendFileSync(INDEX_FILE, indexLine + "\n");
+      }
+    });
+
+    // Keep the promise open — close events will reject it
   });
 }
 
-start().catch((err) => {
+async function runBot() {
+  let reconnectAttempts = 0;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      await connectOnce();
+    } catch (err) {
+      const errMsg = err?.message || String(err);
+
+      // Logged out — give up
+      if (errMsg === "LOGGED_OUT") {
+        console.error("Logged out. Delete the auth/ folder and restart to re-link.");
+        process.exit(1);
+      }
+
+      // Extract status code if present
+      const statusMatch = errMsg.match(/DISCONNECTED:(\d+)/);
+      const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : null;
+
+      // Non-retryable statuses
+      if (statusCode === 401 || statusCode === 440) {
+        console.error(`Non-retryable error (${statusCode}). Exiting.`);
+        process.exit(1);
+      }
+
+      // Increment reconnect attempt counter
+      reconnectAttempts++;
+      // Note: maxAttempts is Infinity, so we never give up
+
+      // Compute backoff delay
+      const delayMs = computeBackoff(RECONNECT_POLICY, reconnectAttempts);
+      console.log(
+        `[RECONNECT] Attempt ${reconnectAttempts}/${RECONNECT_POLICY.maxAttempts}. Reconnecting in ${delayMs}ms...`
+      );
+      await sleep(delayMs);
+    }
+  }
+}
+
+runBot().catch((err) => {
   console.error("Fatal error:", err);
   process.exit(1);
 });
